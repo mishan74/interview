@@ -1,152 +1,140 @@
 package ru.mikhailr.emulator;
 
-
-import javax.swing.*;
+import java.util.*;
 
 /**
- * Из класса вызываются действия состояний.
- * Некоторые состояния вызывают таймер с отложенным действием.
- * Для каждого состояния ининиализирован свой таймер(если таймер необходим).
- *
- * Какие на первый взгляд проблемы:
- * Зачем приватные сет методы? - на случай если появятся специфичные условия для сета.
- * Почему не определить поле позиции лифта, не обращаясь каждый раз к объекту лифта? - на случай если позиция лифта
- * изменится вне данного класса.
- *
- *
  * @author Mikhail Rozdin
  * @version $Id$
  * @since 0.1
  */
+
+/**
+ * Контролирует движение лифта.
+ */
 public class ElevatorActions {
-    private Elevator el;
-    private Timer timer;
-    private State state;
-    private int dest;
+
+    private Date lastFinishTime = Calendar.getInstance().getTime();
+    private int lastFinishStage = 1;
+    private final int pause;
+    private final int speed;
+
+
+    private final Map<Date, Integer> way;
 
     /**
-     * В качестве аргумента объект лифта, через публичные методы которого происходит управление.
-     * @param elevator elevator.
+     * Сообщение от состояния лифта.
      */
-    ElevatorActions(Elevator elevator) {
-        this.el = elevator;
+    private String condition;
+
+    private Status status = Status.WAIT;
+
+    /**
+     * Возможные состояния лифта.
+     */
+    private enum Status {
+        WAIT, STARTING, RUNNING, FINISHING
+    }
+
+    public ElevatorActions(Map<Date, Integer> way, Elevator elevator) {
+        this.way = way;
+        this.pause = elevator.getPause();
+        this.speed = elevator.getSpeed();
     }
 
     /**
-     * изначально метод
-     * вызывает действие из первого состояния.
-     * Когда поле State state станет проинициализированно каким либо состоянием (в данном случае первым же),
-     * то тогда в дальнейшем будет вызываться метод поля State state
+     * Основной метод, возвращает сообщение от состояния лифта.
+     * @return condition.
      */
-    public void exec() {
-        if (state == null) {
-            waitingToWay.doThis();
-        }
-        state.doThis();
-    }
-
-    private void setState(State state) {
-        this.state = state;
-    }
-
-    private void setTimer(Timer timer) {
-        this.timer = timer;
+    public String exec() {
+        initStatus(getDateFromMap(), Math.abs(getStageFromMap() - lastFinishStage));
+        getToSwitch(lastFinishStage, getStageFromMap());
+        return this.condition;
     }
 
     /**
-     * Сосотояние ожидания движения.
+     * Метод очистки карты отображений от пройденных лифтов.
      */
-    private final State waitingToWay = new State() {
-        @Override
-        public void doThis() {
-            if (state != this) {
-                setState(this);
-                el.setStatus("Лифт ожидает движение на " + el.getPosition() + " этаже");
+    public void cleanMap() {
+        Date temp = new Date();
+        Iterator<Date> itr = way.keySet().iterator();
+        while (itr.hasNext()) {
+            Date date = itr.next();
+            if (date.after(temp)) {
+                break;
             }
-            startState.doThis();
+            lastFinishTime = date;
+            lastFinishStage = way.get(lastFinishTime);
+            itr.remove();
         }
-    };
+    }
+
+    private Date getDateFromMap() {
+
+        return !way.isEmpty() ? way.keySet().iterator().next() : lastFinishTime;
+
+    }
+
+    private int getStageFromMap() {
+
+        return !way.isEmpty() ? way.values().iterator().next() : 0;
+
+    }
 
     /**
-     * Состояние начала движения.
+     * Проверка, в каком сейчас состоянии находится лифт.
+     * Проверяется по дате из карты отображений либо по дате последнего прибытия, если карта пуста.
+     * @param date Дата.
+     * @param floor Количество этажей, которые необходимо пройти.
      */
-    private final State startState = new State() {
-        @Override
-        public void doThis() {
-            if (state != this) {
-                if (!el.getWay().isEmpty()) {
-                    dest = el.getWay().poll();
-                    if (dest == el.getPosition() || dest < 1 || dest > el.getStages()) {
-                        this.doThis();
-                    } else {
-                        setState(this);
-                        startTimer.setRepeats(false);
-                        setTimer(startTimer);
-                        timer.start();
-                        el.setStatus("Лифт начал движение в сторону " + dest + " этажа");
-                    }
-                }
-            }
+    private void initStatus(Date date, int floor) {
+        Calendar calendar = Calendar.getInstance();
+        Date now = calendar.getTime();
+        calendar.setTime(date);
+        calendar.add(Calendar.SECOND, -pause);
+        Date finish = calendar.getTime();
+        calendar.add(Calendar.SECOND, -speed * floor);
+        Date run = calendar.getTime();
+        calendar.add(Calendar.SECOND, -pause);
+        Date start = calendar.getTime();
+
+        if (now.after(date)) {
+            this.status = Status.WAIT;
+        } else if (now.after(finish)) {
+            this.status = Status.FINISHING;
+        } else if (now.after(run)) {
+            this.status = Status.RUNNING;
+        } else if (now.after(start)) {
+            this.status = Status.STARTING;
         }
-    };
+    }
 
     /**
-     * Состояние процесса движения.
+     * Метод генерирует сообщение исходя из текущего состояния.
+     * @param position стартовый этаж.
+     * @param dest этаж назначения.
      */
-    private final State moveState = new State() {
-        @Override
-        public void doThis() {
-            if (state != this) {
-                setState(this);
-                timer = moveTimer;
-                timer.start();
-                el.setStatus("Лифт сейчас на " + el.getPosition() + " этаже, движется в сторону " + dest + " этажа");
-            }
-        }
-    };
+    private void getToSwitch(int position, int dest) {
+            switch (status) {
+            case WAIT:
+                condition = String.format("Wait on the %d floor", position);
+                break;
 
-    /**
-     * Состояние окончания движения.
-     */
-    private final State finishState = new State() {
-        @Override
-        public void doThis() {
-            if (state != this) {
-                setState(this);
-                timer = finishTimer;
-                timer.start();
-                el.setStatus("Лифт заканчивает ехать на " + dest + " этаж");
-            }
-        }
-    };
+            case STARTING:
+                condition = String.format("Starting from the %d to the %d floor", position, dest);
+                break;
 
-    /**
-     * Таймер для начала движения.
-     */
-    private final Timer startTimer = new Timer(2000, e -> moveState.doThis());
+            case RUNNING:
+                condition = String.format("Running from the %d to the %d floor",
+                        position, dest);
+                break;
 
-    /**
-     * Таймер для процесса движения.
-     */
-    private final Timer moveTimer = new Timer(5000, e -> {
-        if (dest > el.getPosition()) {
-            el.incrementPosition();
-        } else if (dest < el.getPosition()) {
-            el.decrementPosition();
-        }
-        el.setStatus("Лифт сейчас на " + el.getPosition() + " этаже, движется в сторону " + dest + " этажа");
-        if (el.getPosition() == dest) {
-            timer.stop();
-            finishState.doThis();
-        }
-    });
+            case FINISHING:
+                condition = String.format("Finished to the %d floor", dest);
+                break;
 
-    /**
-     * Таймер для окончания движения.
-     */
-    private final Timer finishTimer = new Timer(2000, e -> {
-        el.setStatus("Лифт приехал на " + dest + " этаж");
-        timer.stop();
-        waitingToWay.doThis();
-    });
+            default:
+                throw new UnsupportedOperationException("Неизвестное состояние");
+
+        }
+    }
 }

@@ -6,7 +6,7 @@ import java.net.Socket;
 import java.util.*;
 
 /**
- * Эмулятор движения лифта.
+ * Программа для получения вероятного состояния движения лифта.
  * Принимает сообщения до тех пор, пока не получит сообщение о выходе
  * "exit".
  * Может передвигаться от первого до указанного этажей.
@@ -31,44 +31,24 @@ public class Elevator {
     /**
      * Очередь движения по этажам.
      */
-    private final Queue<Integer> way = new LinkedList<>();
-    private final ElevatorActions elevatorActions = new ElevatorActions(this);
-
-    private int position = 1;
-
-    private String status;
+    private final Map<Date, Integer> way = new LinkedHashMap<>();
+    private final int pause = 2;
+    private final int speed = 5;
+    private int lastAddedStage = 1;
+    private Date lastAddedTime;
+    private final ElevatorActions elevatorActions = new ElevatorActions(this.way, this);
 
     public Elevator(Socket socket, int stages) {
         this.socket = socket;
         this.stages = stages;
     }
 
-    public Queue<Integer> getWay() {
-        return this.way;
+    public int getPause() {
+        return this.pause;
     }
 
-    public int getPosition() {
-        return this.position;
-    }
-
-    public void incrementPosition() {
-        this.position++;
-    }
-
-    public void decrementPosition() {
-        this.position--;
-    }
-
-    public int getStages() {
-        return this.stages;
-    }
-
-    /**
-     * Метод установки состояния лифта.
-     * @param status Состояние лифта.
-     */
-    public void setStatus(String status) {
-        this.status = status;
+    public int getSpeed() {
+        return this.speed;
     }
 
     /**
@@ -82,7 +62,19 @@ public class Elevator {
     private void fillWay(String message) {
         Scanner tempFloors = new Scanner(message);
         while (tempFloors.hasNextInt()) {
-            way.add(tempFloors.nextInt());
+            int temp = tempFloors.nextInt();
+            Calendar calendar = Calendar.getInstance();
+            if (temp >= 1 && temp <= stages) {
+                if (temp != lastAddedStage) {
+                    if (!way.isEmpty()) {
+                        calendar.setTime(lastAddedTime);
+                    }
+                    calendar.add(Calendar.SECOND, 2 * pause + (speed * Math.abs(temp - lastAddedStage)));
+                    way.put(calendar.getTime(), temp);
+                    lastAddedTime = calendar.getTime();
+                    lastAddedStage = temp;
+                }
+            }
         }
         tempFloors.close();
     }
@@ -96,15 +88,15 @@ public class Elevator {
         try (PrintWriter out = new PrintWriter(this.socket.getOutputStream(), true);
              BufferedReader in = new BufferedReader(new InputStreamReader(this.socket.getInputStream()))) {
             String ask = "";
-            elevatorActions.exec();
-            out.println(this.status);
+            elevatorActions.cleanMap();
+            out.println(elevatorActions.exec());
             while (!("exit".equals(ask))) {
                 ask = in.readLine();
                 System.out.println(ask);
                 if (!ask.equals("exit")) {
+                    elevatorActions.cleanMap();
                     fillWay(ask);
-                    elevatorActions.exec();
-                    out.println(this.status);
+                    out.println(elevatorActions.exec());
                 }
             }
             out.println("bye");
